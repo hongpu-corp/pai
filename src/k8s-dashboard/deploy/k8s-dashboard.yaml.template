@@ -37,12 +37,13 @@ spec:
         kubernetes.io/hostname: {{ cluster_cfg['k8s-dashboard']['dashboard-host'] }}
       containers:
       - name: kubernetes-dashboard-openpai
-        image: k8s.gcr.io/kubernetes-dashboard-amd64:v1.10.1
+        image: {{ cluster_cfg["cluster"]["docker-registry"]["prefix"] }}kubernetes-dashboard-amd64:{{ cluster_cfg["cluster"]["docker-registry"]["tag"] }}
         args:
           - --auto-generate-certificates
           - --port={{ cluster_cfg['k8s-dashboard']['dashboard-port'] }}
           - --tls-cert-file=/tls.crt
           - --tls-key-file=/tls.key
+          - --token-ttl=604800 # 7d
         volumeMounts:
           - name: kubernetes-dashboard-certs-openpai
             mountPath: /certs
@@ -62,6 +63,8 @@ spec:
             port: {{ cluster_cfg['k8s-dashboard']['dashboard-port'] }}
           initialDelaySeconds: 30
           timeoutSeconds: 30
+      imagePullSecrets:
+      - name: {{ cluster_cfg["cluster"]["docker-registry"]["secret-name"] }}
       tolerations:
       - key: "CriticalAddonsOnly"
         operator: "Exists"

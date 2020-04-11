@@ -85,6 +85,8 @@ const yarnLauncherConfigSchema = Joi.object().keys({
       .min(0)
       .default(0),
   }),
+  sqlConnectionString: Joi.string()
+    .required(),
 }).required();
 
 // define k8s launcher config schema
@@ -110,6 +112,10 @@ const k8sLauncherConfigSchema = Joi.object().keys({
   runtimeImagePullSecrets: Joi.string()
     .required(),
   requestHeaders: Joi.object(),
+  sqlConnectionString: Joi.string()
+    .required(),
+  enabledJobHistory: Joi.boolean()
+    .required(),
   healthCheckPath: Joi.func()
     .arity(0)
     .required(),
@@ -165,6 +171,7 @@ if (launcherType === 'yarn') {
       diskType: 0,
       diskMB: 0,
     },
+    sqlConnectionString: 'unset',
     healthCheckPath: () => {
       return `${launcherConfig.webserviceUri}/v1`;
     },
@@ -212,6 +219,8 @@ if (launcherType === 'yarn') {
       'Accept': 'application/json',
       'Content-Type': 'application/json',
     },
+    sqlConnectionString: process.env.SQL_CONNECTION_STR || 'unset',
+    enabledJobHistory: process.env.JOB_HISTORY === 'true',
     healthCheckPath: () => {
       return `/apis/${launcherConfig.apiVersion}`;
     },

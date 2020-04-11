@@ -36,7 +36,6 @@ function normalizePath(path) {
 }
 
 function getStorageServerUri(server) {
-  let blobAddress;
   const data = server.data;
   switch (server.type) {
     case 'nfs':
@@ -44,11 +43,21 @@ function getStorageServerUri(server) {
     case 'samba':
       return `smb://${data.address}/${normalizePath(data.rootPath)}`;
     case 'azurefile':
-      return `smb://${data.dataStore}/${normalizePath(data.fileShare)}`;
+      return (
+        <>
+          <b>{'StorageAccount: '}</b>
+          {data.accountName}; <b>{'FileShare: '}</b>
+          {data.fileShare}; <b>{'Path: '}</b>
+        </>
+      );
     case 'azureblob':
-      blobAddress =
-        data.dataStore || `${data.accountName}.blob.core.windows.net`;
-      return `http://${blobAddress}/${normalizePath(data.containerName)}`;
+      return (
+        <>
+          <b>{'StorageAccount: '}</b>
+          {data.accountName}; <b>{'Container: '}</b>
+          {data.containerName}; <b>{'Path: '}</b>
+        </>
+      );
     case 'hdfs':
       return `hdfs://${data.namenode}:${data.port}`;
     default:
@@ -72,9 +81,11 @@ const StorageList = ({ storageConfigs, storageServers }) => {
           name: `${config.name}:${item.mountPoint}`,
           mountPoint: item.mountPoint,
           type: server.type,
-          serverUri: `${getStorageServerUri(server)}/${normalizePath(
-            item.path,
-          )}`,
+          serverUri: (
+            <>
+              {getStorageServerUri(server)}/{normalizePath(item.path)}
+            </>
+          ),
           permission: item.permission,
         });
       }

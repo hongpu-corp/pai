@@ -42,39 +42,6 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        python: [3.6]
-        os: [ubuntu-16.04, ubuntu-latest]
-
-    steps:
-    - name: Checkout
-      uses: actions/checkout@v1
-    - name: Use Python ${{ matrix.python }}
-      uses: actions/setup-python@v1
-      with:
-        python-version: ${{ matrix.python }}
-        architecture: x64
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install paramiko pyyaml requests prometheus_client twisted
-    - name: Test watchdog
-      run: |
-        cd src/watchdog/test
-        python -m unittest discover .
-    - name: Test job exporter
-      run: |
-        cd src/job-exporter/test
-        python -m unittest discover .
-    - name: Test yarn exporter
-      run: |
-        cd src/yarn-exporter/test
-        python -m unittest discover .
-
-  kube-runtime:
-    name: Test kube-runtime on python-${{ matrix.python}}-${{ matrix.os }}
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
         python: [3.7]
         os: [ubuntu-16.04, ubuntu-latest]
 
@@ -89,15 +56,40 @@ jobs:
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install kubernetes pyyaml requests jinja2 pystache pylint
-    - name: Lint kube-runtime
+        pip install paramiko pyyaml requests prometheus_client twisted
+    - name: Test job exporter
       run: |
-        cd src/kube-runtime
-        pylint --rcfile=.pylintrc src
-    - name: Test kube-runtime
-      run: |
-        cd src/kube-runtime/test
+        cd src/job-exporter/test
         python -m unittest discover .
+    - name: Test yarn exporter
+      run: |
+        cd src/yarn-exporter/test
+        python -m unittest discover .
+
+  watchdog:
+    name: Test watchdog on go-${{ matrix.go }}-${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        go: [1.13.8]
+        os: [ubuntu-16.04, ubuntu-latest]
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v2
+    - name: Use Go ${{ matrix.go }}
+      uses: actions/setup-go@v1
+      with:
+        go-version: ${{ matrix.go }}
+        architecture: x64
+    - name: Build watchdog
+      run: |
+        cd src/watchdog/src
+        go build ./cmd/watchdog/main.go
+    - name: Test watchdog
+      run: |
+        cd src/watchdog/src
+        go test -cover ./pkg/watchdog
 
   framework-launcher:
     name: Test framework launcher on java-${{ matrix.java }}-${{ matrix.os }}
@@ -189,10 +181,5 @@ jobs:
     - name: Test contrib/submit-job-v2
       run: |
         cd contrib/submit-job-v2
-        yarn install --frozen-lockfiles
-        yarn build
-    - name: Test contrib/marketplace
-      run: |
-        cd contrib/marketplace
         yarn install --frozen-lockfiles
         yarn build

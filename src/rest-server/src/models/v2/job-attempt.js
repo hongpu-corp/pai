@@ -16,8 +16,6 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 // module dependencies
-const _ = require('lodash');
-const {Client} = require('@elastic/elasticsearch');
 const crypto = require('crypto');
 const {isNil} = require('lodash');
 
@@ -26,11 +24,7 @@ const launcherConfig = require('@pai/config/launcher');
 const createError = require('@pai/utils/error');
 const k8sModel = require('@pai/models/kubernetes/kubernetes');
 const logger = require('@pai/config/logger');
-
-let elasticSearchClient;
-if (!_.isNil(process.env.ELASTICSEARCH_URI)) {
-  elasticSearchClient = new Client({node: process.env.ELASTICSEARCH_URI});
-}
+const {sequelize} = require('@pai/utils/postgresUtil');
 
 const convertName = (name) => {
   // convert framework name to fit framework controller spec
@@ -47,127 +41,65 @@ const encodeName = (name) => {
   }
 };
 
-// job attempts api only works in k8s launcher and when elastic search exists
-const healthCheck = async () => {
-  if (launcherConfig.type === 'yarn' === 'yarn') {
-    return false;
-  } else if (_.isNil(elasticSearchClient)) {
-    return false;
-  } else {
+if (sequelize && launcherConfig.enabledJobHistory) {
+  const healthCheck = async () => {
     try {
-      const result = await elasticSearchClient.cat.health();
-      if (result.statusCode === 200) {
-        return true;
-      } else {
-        logger.warn(`elastic search is not healthy: ${JSON.stringify(result)}`);
-        return false;
-      }
+      await sequelize.authenticate();
+      return true;
     } catch (e) {
       logger.error(e.message);
       return false;
     }
-  }
-};
-
-// list job attempts
-const list = async (frameworkName) => {
-  if (!healthCheck) {
-    return {status: 501, data: null};
-  }
-
-  let attemptData = [];
-  let uid;
-
-  // get latest framework from k8s API
-  let response;
-  try {
-    response = await k8sModel.getClient().get(
-      launcherConfig.frameworkPath(encodeName(frameworkName)),
-      {
-        headers: launcherConfig.requestHeaders,
-      }
-    );
-  } catch (error) {
-    logger.error(`error when getting framework from k8s api: ${error.message}`);
-    if (error.response != null) {
-      response = error.response;
-    } else {
-      throw error;
-    }
-  }
-
-  if (response.status === 200) {
-    // get UID from k8s framework API
-    uid = response.data.metadata.uid;
-    attemptData.push({
-      ...(await convertToJobAttempt(response.data)),
-      isLatest: true,
-    });
-  } else if (response.status === 404) {
-    logger.warn(`could not get framework ${uid} from k8s: ${JSON.stringify(response)}`);
-    return {status: 404, data: null};
-  } else {
-    throw createError(response.status, 'UnknownError', response.data.message);
-  }
-
-  if (isNil(uid)) {
-    return {status: 404, data: null};
-  }
-
-  // get history frameworks from elastic search
-  const body = {
-    query: {
-      bool: {
-        filter: {
-          term: {
-            'objectSnapshot.metadata.uid.keyword': uid,
-          },
-        },
-      },
-    },
-    size: 0,
-    aggs: {
-      attemptID_group: {
-        terms: {
-          field: 'objectSnapshot.status.attemptStatus.id',
-          order: {
-            _key: 'desc',
-          },
-        },
-        aggs: {
-          collectTime_latest_hits: {
-            top_hits: {
-              sort: [
-                {
-                  collectTime: {
-                    order: 'desc',
-                  },
-                },
-              ],
-              size: 1,
-            },
-          },
-        },
-      },
-    },
   };
 
-  const esResult = await elasticSearchClient.search({
-    index: 'framework',
-    body: body,
-  });
+  const list = async (frameworkName) => {
+    let attemptData = [];
+    let uid;
 
-  const buckets = esResult.body.aggregations.attemptID_group.buckets;
+    // get latest framework from k8s API
+    let response;
+    try {
+      response = await k8sModel.getClient().get(
+        launcherConfig.frameworkPath(encodeName(frameworkName)),
+        {
+          headers: launcherConfig.requestHeaders,
+        }
+      );
+    } catch (error) {
+      logger.error(`error when getting framework from k8s api: ${error.message}`);
+      if (error.response != null) {
+        response = error.response;
+      } else {
+        throw error;
+      }
+    }
 
-  if (_.isEmpty(buckets)) {
-    return {status: 404, data: null};
-  } else {
-    const retryFrameworks = buckets.map((bucket) => {
-      return bucket.collectTime_latest_hits.hits.hits[0]._source.objectSnapshot;
-    });
+    if (response.status === 200) {
+      // get UID from k8s framework API
+      uid = response.data.metadata.uid;
+      attemptData.push({
+        ...(await convertToJobAttempt(response.data)),
+        isLatest: true,
+      });
+    } else if (response.status === 404) {
+      logger.warn(`could not get framework ${uid} from k8s: ${JSON.stringify(response)}`);
+      return {status: 404, data: null};
+    } else {
+      throw createError(response.status, 'UnknownError', response.data.message);
+    }
+
+    if (isNil(uid)) {
+      return {status: 404, data: null};
+    }
+
+    const sqlSentence = `SELECT (record->'objectSnapshot') as data FROM fc_objectsnapshots WHERE ` +
+      `record->'objectSnapshot'->'metadata'->'uid' ? '${uid}' and ` +
+      `record->'objectSnapshot'->'kind' ? 'Framework' ` +
+      `ORDER BY cast(record->'objectSnapshot'->'status'->'attemptStatus'->>'id' as INTEGER) ASC;`;
+    const pgResult = (await sequelize.query(sqlSentence))[0];
     const jobRetries = await Promise.all(
-      retryFrameworks.map((attemptFramework) => {
-        return convertToJobAttempt(attemptFramework);
+      pgResult.map((row) => {
+        return convertToJobAttempt(row.data);
       }),
     );
     attemptData.push(
@@ -177,114 +109,81 @@ const list = async (frameworkName) => {
     );
 
     return {status: 200, data: attemptData};
-  }
-};
+  };
 
-const get = async (frameworkName, jobAttemptIndex) => {
-  if (!healthCheck) {
-    return {status: 501, data: null};
-  }
-
-  let uid;
-  let attemptFramework;
-  let response;
-  try {
-    response = await k8sModel.getClient().get(
-      launcherConfig.frameworkPath(encodeName(frameworkName)),
-      {
-        headers: launcherConfig.requestHeaders,
+  const get = async (frameworkName, jobAttemptIndex) => {
+    let uid;
+    let attemptFramework;
+    let response;
+    try {
+      response = await k8sModel.getClient().get(
+        launcherConfig.frameworkPath(encodeName(frameworkName)),
+        {
+          headers: launcherConfig.requestHeaders,
+        }
+      );
+    } catch (error) {
+      logger.error(`error when getting framework from k8s api: ${error.message}`);
+      if (error.response != null) {
+        response = error.response;
+      } else {
+        throw error;
       }
-    );
-  } catch (error) {
-    logger.error(`error when getting framework from k8s api: ${error.message}`);
-    if (error.response != null) {
-      response = error.response;
-    } else {
-      throw error;
     }
-  }
 
-  if (response.status === 200) {
-    // get uid from k8s framwork API
-    uid = response.data.metadata.uid;
-    attemptFramework = response.data;
-  } else if (response.status === 404) {
-    logger.warn(`could not get framework ${uid} from k8s: ${JSON.stringify(response)}`);
-    return {status: 404, data: null};
-  } else {
-    throw createError(response.status, 'UnknownError', response.data.message);
-  }
-
-  if (jobAttemptIndex < attemptFramework.spec.retryPolicy.maxRetryCount) {
-    if (isNil(uid)) {
-      return {status: 404, data: null};
-    }
-    // get history frameworks from elastic search
-    const body = {
-      query: {
-        bool: {
-          filter: {
-            term: {
-              'objectSnapshot.metadata.uid.keyword': uid,
-            },
-          },
-        },
-      },
-      size: 0,
-      aggs: {
-        attemptID_group: {
-          filter: {
-            term: {
-              'objectSnapshot.status.attemptStatus.id': jobAttemptIndex,
-            },
-          },
-          aggs: {
-            collectTime_latest_hits: {
-              top_hits: {
-                sort: [
-                  {
-                    collectTime: {
-                      order: 'desc',
-                    },
-                  },
-                ],
-                size: 1,
-              },
-            },
-          },
-        },
-      },
-    };
-
-    const esResult = await elasticSearchClient.search({
-      index: 'framework',
-      body: body,
-    });
-
-    const buckets =
-      esResult.body.aggregations.attemptID_group.collectTime_latest_hits.hits
-        .hits;
-
-    if (_.isEmpty(buckets)) {
+    if (response.status === 200) {
+      // get uid from k8s framwork API
+      uid = response.data.metadata.uid;
+      attemptFramework = response.data;
+    } else if (response.status === 404) {
+      logger.warn(`could not get framework ${uid} from k8s: ${JSON.stringify(response)}`);
       return {status: 404, data: null};
     } else {
-      attemptFramework = buckets[0]._source.objectSnapshot;
+      throw createError(response.status, 'UnknownError', response.data.message);
+    }
+
+    if (jobAttemptIndex < attemptFramework.spec.retryPolicy.maxRetryCount) {
+      if (isNil(uid)) {
+        return {status: 404, data: null};
+      }
+      const sqlSentence = `SELECT (record->'objectSnapshot') as data FROM fc_objectsnapshots WHERE ` +
+        `record->'objectSnapshot'->'metadata'->'uid' ? '${uid}' and ` +
+        `record->'objectSnapshot'->'status'->'attemptStatus'->>'id' = '${jobAttemptIndex}' and ` +
+        `record->'objectSnapshot'->'kind' ? 'Framework' ` +
+        `ORDER BY cast(record->'objectSnapshot'->'status'->'attemptStatus'->>'id' as INTEGER) ASC;`;
+      const pgResult = (await sequelize.query(sqlSentence))[0];
+
+      if (pgResult.length === 0) {
+        return {status: 404, data: null};
+      } else {
+        attemptFramework = pgResult[0].data;
+        const attemptDetail = await convertToJobAttempt(attemptFramework);
+        return {status: 200, data: {...attemptDetail, isLatest: false}};
+      }
+    } else if (
+      jobAttemptIndex === attemptFramework.spec.retryPolicy.maxRetryCount
+    ) {
+      // get latest frameworks from k8s API
       const attemptDetail = await convertToJobAttempt(attemptFramework);
-      return {status: 200, data: {...attemptDetail, isLatest: false}};
+      return {status: 200, data: {...attemptDetail, isLatest: true}};
+    } else {
+      return {status: 404, data: null};
     }
-  } else if (
-    jobAttemptIndex === attemptFramework.spec.retryPolicy.maxRetryCount
-  ) {
-    // get latest frameworks from k8s API
-    const attemptDetail = await convertToJobAttempt(attemptFramework);
-    return {status: 200, data: {...attemptDetail, isLatest: true}};
-  } else {
-    return {status: 404, data: null};
-  }
-};
+  };
 
-module.exports = {
-  healthCheck,
-  list,
-  get,
-};
+  module.exports = {
+    healthCheck,
+    list,
+    get,
+  };
+} else {
+  module.exports = {
+    healthCheck: () => false,
+    list: () => {
+ throw Error('Unexpected Call');
+},
+    get: () => {
+ throw Error('Unexpected Call');
+},
+  };
+}

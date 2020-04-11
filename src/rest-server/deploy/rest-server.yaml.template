@@ -63,7 +63,7 @@ spec:
         - name: LAUNCHER_PRIORITY_CLASS
           value: "{{ cluster_cfg['rest-server']['enable-priority-class'] }}"
         - name: LAUNCHER_RUNTIME_IMAGE
-          value: {{ cluster_cfg['cluster']['docker-registry']['prefix'] }}kube-runtime:{{ cluster_cfg['cluster']['docker-registry']['tag'] }}
+          value: {{ cluster_cfg['cluster']['docker-registry']['prefix'] }}openpai-runtime:{{ cluster_cfg['cluster']['docker-registry']['tag'] }}
         - name: LAUNCHER_RUNTIME_IMAGE_PULL_SECRETS
           value: {{ cluster_cfg["cluster"]["docker-registry"]["secret-name"] }}
         - name: LAUNCHER_SCHEDULER
@@ -92,7 +92,11 @@ spec:
         - name: JWT_TOKEN_EXPIRE_TIME
           value: {{ cluster_cfg['rest-server']['jwt-expire-time'] }}
         - name: WEBPORTAL_URL
-          value: "{{ cluster_cfg['webportal']['webportal-address']}}"
+{%- if "ssl" in cluster_cfg["pylon"] and cluster_cfg["pylon"]["ssl"] %}
+          value: "{{ cluster_cfg['pylon']['uriHttps']}}"
+{%- else %}
+          value: "{{ cluster_cfg['pylon']['uri']}}"
+{%- endif %}
 {% if not cluster_cfg['authentication']['OIDC'] %}
         - name: AUTHN_METHOD
           value: basic
@@ -104,10 +108,6 @@ spec:
         - name: AUTHN_METHOD
           value: OIDC
 {% endif %}
-{%- if 'elasticsearch' in cluster_cfg and cluster_cfg['elasticsearch']['master-ip'] %}
-        - name: ELASTICSEARCH_URI
-          value: http://{{ cluster_cfg['elasticsearch']['master-ip'] }}:30100
-{%- endif %}
         - name: K8S_APISERVER_URI
           value: {{ cluster_cfg['layout']['kubernetes']['api-servers-url'] }}
         - name: AZ_RDMA
@@ -124,6 +124,13 @@ spec:
 {% if cluster_cfg['postgresql']['enable'] %}
         - name: SQL_CONNECTION_STR
           value: {{ cluster_cfg['postgresql']['connection-str'] }}
+{% endif %}
+{% if cluster_cfg['cluster']['common']['job-history'] != 'false' %}
+        - name: JOB_HISTORY
+          value: "true"
+{% else %}
+        - name: JOB_HISTORY
+          value: "false"
 {% endif %}
         ports:
         - name: rest-server

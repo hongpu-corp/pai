@@ -1,6 +1,8 @@
 The `Python` SDK and CLI for `OpenPAI`
 ----
 
+***Note: Python SDK is deprecated and will be removed in the future. New SDK and CLI support is available at [openpaisdk](https://github.com/microsoft/openpaisdk).***
+
 This is a proof-of-concept SDK (Python) and CLI (command-line-interface) tool for the [OpenPAI](http://github.com/microsoft/pai). This project provides some facilities to make `OpenPAI` more easily accessible and usable for users. With it,
 
 - User can easily access `OpenPAI` resources in scripts (`Python` or `Shell`) and `Jupyter` notebooks
@@ -228,7 +230,7 @@ opai job list -a <cluster-alias> [<job-name>]
 
 ### How to submit a job from existing job config file
 
-If you already has a job config file, you could submit a job based on it directly. The job config file could be in the format of `json` or `yaml`, and it must be compatible with [job configuration specification v1](https://github.com/microsoft/pai/blob/master/docs/job_tutorial.md) or [pai-job-protocol v2](https://github.com/Microsoft/pai/blob/master/docs/pai-job-protocol.yaml).
+If you already has a job config file, you could submit a job based on it directly. The job config file could be in the format of `json` or `yaml`, and it must be compatible with [job configuration specification v1](https://github.com/microsoft/pai/blob/master/docs/job_tutorial.md) or [pai-job-protocol v2](https://github.com/microsoft/openpai-protocol/blob/master/schemas/v2/schema.yaml).
 
 ```bash
 opai job submit -a <cluster-alias> <config-file>
